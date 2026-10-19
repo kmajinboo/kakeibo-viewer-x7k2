@@ -287,11 +287,27 @@ function parseSheet(ws){
 }
 function parseWorkbook(wb){
   const rows=[], warns=[], skipped=[], master=new Map();
+  const looks = ws => /当月の支出合計/.test(cellText(ws,"E58")) && /当月の収入合計/.test(cellText(ws,"A58"));
+  const found=[];
   for(const name of wb.SheetNames){
-    if(!name.startsWith("家計計画表")) continue;
     const ws = wb.Sheets[name];
+    const byName = nk(name).includes("家計計画表");
+    if(!byName && !looks(ws)) continue;
     const m = String(ws["G1"]?ws["G1"].v:"").match(/(\d{4})\s*年\s*(\d{1,2})\s*月/);
-    if(!m){ skipped.push(name); continue; }
+    let year = m?+m[1]:null, month = m?+m[2]:null, guessed=false;
+    if(!m){ const mm = nk(name).match(/(\d{1,2})月/); if(mm){ month=+mm[1]; guessed=true; } }
+    if(!month || month<1 || month>12){ if(byName) skipped.push(name); continue; }
+    found.push({name,ws,year,month,guessed});
+  }
+  const ys = found.filter(f=>f.year).map(f=>f.year);
+  const defYear = ys.length ? ys.sort((a,b)=>ys.filter(v=>v===b).length-ys.filter(v=>v===a).length)[0] : null;
+  for(const f of found){
+    if(!f.year){ if(defYear) f.year=defYear; else { skipped.push(f.name); f.skip=true; continue; } }
+    if(f.guessed) warns.push(`「${f.name}」：G1セルに年月がないため、シート名の「${f.month}月」と他シートの年（${f.year}年）から判定しました。`);
+  }
+  for(const f of found){
+    if(f.skip) continue;
+    const name=f.name, ws=f.ws, m=[null,f.year,f.month];
     const its = parseSheet(ws), amt = {};
     for(const [k,it] of its){
       if(!master.has(k)) master.set(k,{side:it.side,key:it.key,label:it.label,orig:it.orig});
@@ -306,8 +322,8 @@ function parseWorkbook(wb){
   rows.sort((a,b)=>a.year-b.year||a.month-b.month);
   const seen=new Set();
   for(const r of rows){ const k=r.year*100+r.month; if(seen.has(k)) warns.push(`${r.year}年${r.month}月が複数のシートにあります（${r.sheet}）。重複して集計されます。`); seen.add(k); }
-  if(skipped.length) warns.push(`月を判別できず除外したシート：${skipped.join("、")}（G1セルに「2026年1月）」の形式で月が必要です）`);
-  return {rows, items:[...master.values()], warns};
+  if(skipped.length) warns.push(`月を判別できず除外したシート：${skipped.join("、")}（G1セルに「2026年1月）」の形式で年月、またはシート名に「○月」が必要です）`);
+  return {rows, items:[...master.values()], warns, sheetNames:wb.SheetNames.slice()};
 }
 function loadFile(f){
   const rd = new FileReader();
@@ -315,7 +331,12 @@ function loadFile(f){
     try{
       const wb = XLSX.read(new Uint8Array(e.target.result),{type:"array"});
       const p = parseWorkbook(wb);
-      if(!p.rows.length){ state.warns=["「家計計画表」の月別シートが見つかりませんでした。"]; render(true); return; }
+      if(!p.rows.length){
+        const w=[`月別の家計計画表を読み取れませんでした。このファイルのシート：${p.sheetNames.map(n=>"「"+n+"」").join("、")||"（なし）"}`,
+          "読み取れるのは、シート名に「家計計画表」を含む（または家計計画表と同じ様式の）シートで、G1セルに「2026年1月）」のように年月が入っているものです。"];
+        if(p.sheetNames.includes("入力") && p.sheetNames.includes("集計")) w.push("これは集計用のExcelのようです。元の家計計画表のExcelファイルを読み込んでください。");
+        state.warns=w.concat(p.warns); render(true); document.getElementById("status").textContent="「"+f.name+"」は読み取れませんでした（表示は直前のデータのままです）。"; return;
+      }
       state = {rows:p.rows, items:p.items, opening:p.rows[0].carry_in, source:f.name, warns:p.warns};
       document.getElementById("open").value = state.opening;
       render(); renderSettings();
