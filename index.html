@@ -196,7 +196,8 @@ const STD_SPEC = {
    "家計計画表"
   ],
   "nameExcludes": [
-   "相談時"
+   "相談時",
+   "記入例"
   ],
   "signature": [
    {
@@ -592,6 +593,17 @@ function parseSide(ws, side, sp, add){
   const heads = new Map(sp.headings.map(h=>[nk(h.text), h.name]));
   const same = sp.labelCol===sp.headingCol, pcol = sp.personCol || sp.headingCol;
   let cur="", person="";
+  // 見出し行に小計が数字で手入力されている場合（式を上書きした場合）は、その下の項目の合計と一致すれば小計とみなす
+  const typedSub = new Set();
+  { let hr=null, hv=0, kids=0;
+    const close=()=>{ if(hr!==null && hv && kids && Math.round(hv)===Math.round(kids)) typedSub.add(hr); };
+    for(let r=sp.firstRow; r<=sp.lastRow; r++){
+      const c = ws[sp.amountCol+r];
+      if(heads.get(nk(cellText(ws, sp.headingCol+r)))){ close(); hr=r; hv = (!isSub(c,sp.subtotalMarker) && isNum(c)) ? c.v : 0; kids=0; }
+      else if(!isSub(c,sp.subtotalMarker) && isNum(c)) kids += c.v;
+    }
+    close();
+  }
   for(let r=sp.firstRow; r<=sp.lastRow; r++){
     const head = cellText(ws, sp.headingCol+r), hdr = heads.get(nk(head));
     if(hdr){ cur=hdr; person=""; }
@@ -599,6 +611,7 @@ function parseSide(ws, side, sp, add){
     if(isSub(cc, sp.subtotalMarker)) continue;
     let amt = isNum(cc) ? cc.v : 0;
     if(hdr && sp.headingAmount==="ignore") amt = 0;
+    if(hdr && typedSub.has(r)){ amt = 0; parseNotes.push(hdr); }
     if(same){
       if(hdr){ if(amt) add(side, head, cur, amt); }
       else if(head) add(side, head, cur, amt);
@@ -616,6 +629,7 @@ function parseSide(ws, side, sp, add){
     }
   }
 }
+let parseNotes = [];
 function parseSheet(ws){
   const items = new Map();
   const add = (side,label,orig,amt)=>{ const key=nk(label); if(!key) return; const k=side+"|"+key; let it=items.get(k); if(!it){ it={side,key,label,orig,amt:0}; items.set(k,it);} it.amt+=amt; };
@@ -623,8 +637,15 @@ function parseSheet(ws){
   parseSide(ws,"inc",spec.income,add);
   return items;
 }
+function hasAmounts(ws){
+  for(const b of [spec.expense, spec.income]){
+    for(let r=b.firstRow; r<=b.lastRow; r++){ const c=ws[b.amountCol+r]; if(c && typeof c.v==="number" && c.v!==0) return true; }
+  }
+  return false;
+}
 function parseWorkbook(wb){
   const rows=[], warns=[], skipped=[], mismatch=[], dups=[], master=new Map(), sh=spec.sheet;
+  let emptyN=0;
   const bySig = ws => sh.signature.length>0 && sh.signature.every(g=>nk(cellText(ws,g.cell)).includes(g.contains));
   const found=[];
   for(const name of wb.SheetNames){
@@ -637,10 +658,11 @@ function parseWorkbook(wb){
     let m = null;
     for(const parts of sh.monthCells){
       const txt = parts.map(a=>ws[a]?String(ws[a].v==null?"":ws[a].v):"").join("");
-      m = txt.match(sh.monthRe); if(m) break;
+      m = txt.normalize("NFKC").match(sh.monthRe); if(m) break;
     }
     let year = m?+m[1]:null, month = m?+m[2]:null, guessed=false;
     if(!m && sh.monthFromName){ const mm = nk(name).match(/(\d{1,2})月/); if(mm){ month=+mm[1]; guessed=true; } }
+    if(!m && !hasAmounts(ws)){ emptyN++; continue; }   // 年月も金額も空のシート（未使用のひな形）は黙って読み飛ばす
     if(!month || month<1 || month>12){ if(byName) skipped.push(name); continue; }
     found.push({name,ws,year,month,guessed});
   }
@@ -655,7 +677,9 @@ function parseWorkbook(wb){
   for(const [k,names] of byMonth) if(names.length>1) dups.push(`${Math.floor(k/100)}年${k%100}月が複数のシートにあります：${names.map(n=>"「"+n+"」").join("、")}`);
   for(const f of found){
     if(f.skip) continue;
+    parseNotes = [];
     const ws=f.ws, its = parseSheet(ws), amt = {};
+    if(parseNotes.length) warns.push(`「${f.name}」：見出し行（${parseNotes.join("、")}）に小計が数字で入力されていたため、小計として扱いました（二重に数えていません）。式（SUM）に戻すと、この表示は出なくなります。`);
     for(const [k,it] of its){
       if(!master.has(k)) master.set(k,{side:it.side,key:it.key,label:it.label,orig:it.orig});
       amt[k]=it.amt;
@@ -669,7 +693,7 @@ function parseWorkbook(wb){
   rows.sort((a,b)=>a.year-b.year||a.month-b.month);
   if(skipped.length) warns.push(`月を判別できず除外したシート：${skipped.join("、")}（${sh.monthLabel}に年月、またはシート名に「○月」が必要です）`);
   if(mismatch.length) warns.push(`シートの配置が様式（${spec.name}）と違うため除外したシート：${mismatch.map(n=>"「"+n+"」").join("、")}（${sh.signature.map(g=>g.cell+"に「"+g.contains+"」").join("、")} が必要です。別の様式なら、様式定義ファイルを読み込んでください）`);
-  return {rows, items:[...master.values()], warns, dups, sheetNames:wb.SheetNames.slice()};
+  return {rows, items:[...master.values()], warns, dups, emptyN, sheetNames:wb.SheetNames.slice()};
 }
 /* 読み込んだブックを現在の様式で取り込む。成功したら true */
 function ingest(wb, fname){
@@ -682,6 +706,7 @@ function ingest(wb, fname){
   if(!p.rows.length){
     const w=[`月別の家計計画表を読み取れませんでした（様式：${spec.name}）。このファイルのシート：${p.sheetNames.map(n=>"「"+n+"」").join("、")||"（なし）"}`,
       `読み取れるのは、様式定義で指定したシート（名前に「${spec.sheet.nameContains.join("」「")||"—"}」を含む、または同じ様式のシート）で、${spec.sheet.monthLabel}に年月が入っているものです。`];
+    if(p.emptyN) w.push(`家計計画表のシートはありますが、年月と金額が入力されたシートがありません（空のシート${p.emptyN}枚は読み飛ばしました）。G1に年月、黄色のセルに金額を入力してから読み込んでください。`);
     if(p.sheetNames.includes("入力") && p.sheetNames.includes("集計")) w.push("これは集計用のExcelのようです。元の家計計画表のExcelファイルを読み込んでください。");
     state.warns=w.concat(p.warns); return false;
   }
