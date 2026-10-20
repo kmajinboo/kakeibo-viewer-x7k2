@@ -148,6 +148,23 @@ details.cfg[open]>summary::before{transform:rotate(90deg)}
   </div>
 
   <div class="card">
+    <details class="cfg">
+      <summary>読み取りルール（様式定義）</summary>
+      <p class="note" style="margin-top:8px">どのセルから何を読み取るかのルールです。事業所ごとに様式が違うときは、様式定義ファイル（JSON）を自分で書いて読み込みます。書き方は SPEC.md を見てください。</p>
+      <p>現在の様式：<b id="specName"></b></p>
+      <div class="cfgrow">
+        <button class="btn" id="specPick" type="button">様式定義ファイルを読み込む</button>
+        <button class="btn" id="specDl" type="button">標準様式の定義をダウンロード</button>
+        <button class="btn" id="specStd" type="button">標準様式に戻す</button>
+        <input type="file" id="specFile" accept=".json,.txt,application/json,text/plain" hidden>
+        <span class="status" id="specOk"></span>
+      </div>
+      <div id="specErr"></div>
+      <p class="sm">様式定義を読み込むと、読み込み済みのExcelはその様式で読み直されます。区分の設定は、様式ごとに別々に保存されます。</p>
+    </details>
+  </div>
+
+  <div class="card" id="excelCard">
     <h2>Excel版に貼り付ける</h2>
     <p class="note">「家計表_集計.xlsx」の「入力」シートに貼り付けられる形式（元の大分類9区分）でコピーします。A5セルを選んで貼り付けてください。区分の設定は影響しません。</p>
     <button class="btn" id="copy" type="button">貼り付け用にコピー</button>
@@ -169,55 +186,369 @@ break;case"<bookViews":;case"<bookViews>":;case"</bookViews>":break;case"<workbo
 <script>
 "use strict";
 const INIT = {"items": [], "rows": []};
+const STD_SPEC = {
+ "_説明": "家計計画表（標準様式）の読み取りルールです。「_」で始まる項目は説明用で、動作には使いません。コピーして書き換え、画面の「様式定義ファイルを読み込む」から読み込めます。書き方は SPEC.md を参照してください。",
+ "version": 1,
+ "name": "家計計画表（標準様式）",
+ "sheet": {
+  "_説明": "どのシートを月別シートとして読むかと、月の判定方法。nameContains＝シート名にこの語を含む。signature＝シート名が違っても、このセルにこの語があれば対象。nameExcludes＝シート名にこの語を含むシートは除く。月は month.cell のセルから pattern（1つ目のかっこ=年、2つ目=月）で取り出す。cell は候補を [ ] で並べると、上から順に探す（G1+H1 と書くと、2つのセルをつなげて読む）。",
+  "nameContains": [
+   "家計計画表"
+  ],
+  "nameExcludes": [
+   "相談時"
+  ],
+  "signature": [
+   {
+    "cell": "E58",
+    "contains": "当月の支出合計"
+   },
+   {
+    "cell": "A58",
+    "contains": "当月の収入合計"
+   }
+  ],
+  "month": {
+   "cell": [
+    "G1+H1",
+    "G1",
+    "F1"
+   ],
+   "pattern": "(\\d{4})\\s*年\\s*(\\d{1,2})\\s*月"
+  },
+  "monthFromName": true
+ },
+ "carry": {
+  "_説明": "前月繰越が入っているセル（最初の月の開始繰越として使う）。不要なら項目ごと削除。",
+  "cell": "C17"
+ },
+ "expense": {
+  "_説明": "支出の読み取り範囲。headingCol＝見出し（大分類）の列、labelCol＝項目名の列、amountCol＝金額の列。見出しと項目名が同じ列なら labelCol と headingCol は同じにする。headings＝見出しの名前（text＝シート上の表記、name＝画面で使う名前。省略するとtext）。headingAmount＝見出し行の金額を数えるか（count/ignore）。金額セルの式に subtotalMarker（既定は SUM( ）を含む行は小計とみなして数えない。",
+  "headingCol": "E",
+  "labelCol": "E",
+  "amountCol": "F",
+  "firstRow": 4,
+  "lastRow": 57,
+  "headings": [
+   "住居費",
+   "基本生活費",
+   "通信費・車両費",
+   "教育等費用",
+   "教養・娯楽費用",
+   "その他",
+   "税金・保険",
+   "返済金",
+   "預貯金預入れ"
+  ],
+  "headingAmount": "count",
+  "subtotalMarker": "SUM("
+ },
+ "income": {
+  "_説明": "収入の読み取り範囲。headingCol＝見出しの列（A列）、personCol＝本人・配偶者などの列（省略時は headingCol）、labelCol＝項目名の列（B列）、amountCol＝金額の列（C列）。項目名は「本人 給与①」のように、人の名前と項目名をつなげて表示する。",
+  "headingCol": "A",
+  "personCol": "A",
+  "labelCol": "B",
+  "amountCol": "C",
+  "firstRow": 18,
+  "lastRow": 57,
+  "headings": [
+   {
+    "text": "基本収入",
+    "name": "基本収入"
+   },
+   {
+    "text": "臨時収入・賞与",
+    "name": "臨時収入・賞与"
+   },
+   {
+    "text": "援助収入や手当等の収入（毎月）",
+    "name": "援助収入等（毎月）"
+   },
+   {
+    "text": "援助収入や手当等の収入（毎月以外）",
+    "name": "援助収入等（毎月以外）"
+   },
+   {
+    "text": "借入金",
+    "name": "借入金"
+   },
+   {
+    "text": "預貯金取崩し",
+    "name": "預貯金取崩し"
+   }
+  ],
+  "headingAmount": "count",
+  "subtotalMarker": "SUM("
+ },
+ "check": {
+  "_説明": "検算用。シート上の収入合計・支出合計のセル。読み取った項目の合計と合わないと、画面に警告を出す。不要なら項目ごと削除。",
+  "incomeCell": "C58",
+  "expenseCell": "G58"
+ },
+ "groups": {
+  "_説明": "画面に表示する区分（初期値）。画面の「区分の設定」でも変えられる。",
+  "expense": [
+   "住居",
+   "食費",
+   "水道光熱",
+   "通信・車両",
+   "教育",
+   "医療・日用",
+   "教養・娯楽・その他",
+   "税金・保険",
+   "返済",
+   "貯蓄"
+  ],
+  "income": [
+   "基本収入",
+   "臨時収入・賞与",
+   "援助収入等（毎月）",
+   "援助収入等（毎月以外）",
+   "借入金",
+   "預貯金取崩し"
+  ]
+ },
+ "rules": {
+  "_説明": "項目名から区分を決めるキーワード。上から順に判定し、最初に当てはまった区分に入れる。match は正規表現（| で「または」）。全角半角・スペースの違いは無視される。",
+  "expense": [
+   {
+    "group": "教育",
+    "match": "学費|保育|給食|部活|通学|塾|習い事|習いごと"
+   },
+   {
+    "group": "返済",
+    "match": "ローン|返済|借入|借金|滞納|銀行|消費者金融|クレジット|キャッシング"
+   },
+   {
+    "group": "住居",
+    "match": "家賃|管理費|維持費|修理費|更新費|地代|共益費|賃料"
+   },
+   {
+    "group": "水道光熱",
+    "match": "電気|ガス代|水道|灯油|光熱|電力"
+   },
+   {
+    "group": "食費",
+    "match": "^食費|外食|食料|^食事"
+   },
+   {
+    "group": "税金・保険",
+    "match": "税|保険"
+   },
+   {
+    "group": "通信・車両",
+    "match": "受信料|NHK",
+    "flags": "i"
+   },
+   {
+    "group": "通信・車両",
+    "match": "電話|携帯|インターネット|通信|ガソリン|駐車|車検|車|通勤|交通費"
+   },
+   {
+    "group": "医療・日用",
+    "match": "被服|理美容|雑貨|医療|介護|日用"
+   },
+   {
+    "group": "教養・娯楽・その他",
+    "match": "新聞|雑誌|教養|遊興|娯楽|酒|たばこ|小遣い|仕送り"
+   },
+   {
+    "group": "貯蓄",
+    "match": "預貯金預入|貯蓄|貯金|預入"
+   }
+  ],
+  "income": []
+ },
+ "fallback": {
+  "_説明": "キーワードで決まらなかった項目を、元の見出し（大分類）から区分へ振り分ける。ここにもなければ「未分類」。収入は見出しの名前が区分名と同じなら自動でその区分に入る。",
+  "expense": {
+   "住居費": "住居",
+   "基本生活費": "医療・日用",
+   "通信費・車両費": "通信・車両",
+   "教育等費用": "教育",
+   "教養・娯楽費用": "教養・娯楽・その他",
+   "その他": "教養・娯楽・その他",
+   "税金・保険": "税金・保険",
+   "返済金": "返済",
+   "預貯金預入れ": "貯蓄"
+  },
+  "income": {}
+ },
+ "excelPaste": {
+  "_説明": "「Excel版に貼り付ける」ボタン用。Excel版（家計表_集計.xlsx）の「入力」シートの列順に合わせた、元の見出し名（name）の並び。使わない場合は項目ごと削除（ボタンは表示されなくなる）。",
+  "income": [
+   "基本収入",
+   "臨時収入・賞与",
+   "援助収入等（毎月）",
+   "援助収入等（毎月以外）",
+   "借入金",
+   "預貯金取崩し"
+  ],
+  "expense": [
+   "住居費",
+   "基本生活費",
+   "通信費・車両費",
+   "教育等費用",
+   "教養・娯楽費用",
+   "その他",
+   "税金・保険",
+   "返済金",
+   "預貯金預入れ"
+  ]
+ }
+};
 const sum = a => a.reduce((x,y)=>x+y,0);
 const yen = n => (n===""||n==null) ? "" : (n===0 ? "-" : (n<0?"−":"")+Math.abs(Math.round(n)).toLocaleString("ja-JP"));
 const esc = s => String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const nk = s => String(s==null?"":s).normalize("NFKC").replace(/[\s　]+/g,"");
 const disp = s => String(s==null?"":s).replace(/[\s　]+/g," ").trim();
-
-/* ---------- 区分の初期設定 ---------- */
 const UNCL = "未分類";
-const DEF_GROUPS = {
-  exp:["住居","食費","水道光熱","通信・車両","教育","医療・日用","教養・娯楽・その他","税金・保険","返済","貯蓄"],
-  inc:["基本収入","臨時収入・賞与","援助収入等（毎月）","援助収入等（毎月以外）","借入金","預貯金取崩し"]
-};
-/* 元の様式の大分類 → 表示用の区分 */
-const EXP_ORIG = ["住居費","基本生活費","通信費・車両費","教育等費用","教養・娯楽費用","その他","税金・保険","返済金","預貯金預入れ"];
-const EXP_ORIG_TO_GROUP = {"住居費":"住居","基本生活費":"医療・日用","通信費・車両費":"通信・車両","教育等費用":"教育","教養・娯楽費用":"教養・娯楽・その他","その他":"教養・娯楽・その他","税金・保険":"税金・保険","返済金":"返済","預貯金預入れ":"貯蓄"};
-const INC_ORIG = [["基本収入","基本収入"],["臨時収入・賞与","臨時収入・賞与"],["援助収入や手当等の収入（毎月）","援助収入等（毎月）"],["援助収入や手当等の収入（毎月以外）","援助収入等（毎月以外）"],["借入金","借入金"],["預貯金取崩し","預貯金取崩し"]];
-const EXP_H = new Map(EXP_ORIG.map(n=>[nk(n),n]));
-const INC_H = new Map(INC_ORIG.map(([n,s])=>[nk(n),s]));
-/* 項目名のキーワード → 区分（上から順に判定） */
-const RULES = [
-  [/学費|保育|給食|部活|通学|塾|習い事|習いごと/,"教育"],
-  [/ローン|返済|借入|借金|滞納|銀行|消費者金融|クレジット|キャッシング/,"返済"],
-  [/家賃|管理費|維持費|修理費|更新費|地代|共益費|賃料/,"住居"],
-  [/電気|ガス代|水道|灯油|光熱|電力/,"水道光熱"],
-  [/^食費|外食|食料|^食事/,"食費"],
-  [/税|保険/,"税金・保険"],
-  [/受信料|NHK/i,"通信・車両"],
-  [/電話|携帯|インターネット|通信|ガソリン|駐車|車検|車|通勤|交通費/,"通信・車両"],
-  [/被服|理美容|雑貨|医療|介護|日用/,"医療・日用"],
-  [/新聞|雑誌|教養|遊興|娯楽|酒|たばこ|小遣い|仕送り/,"教養・娯楽・その他"],
-  [/預貯金預入|貯蓄|貯金|預入/,"貯蓄"]
-];
+
+/* ==================== 様式定義（読み取りルール） ==================== */
+const colName = c => (typeof c==="string" && /^[A-Za-z]{1,3}$/.test(c.trim())) ? c.trim().toUpperCase() : null;
+const cellAddr = c => (typeof c==="string" && /^[A-Za-z]{1,3}[1-9]\d{0,5}$/.test(c.trim())) ? c.trim().toUpperCase() : null;
+function toRegex(src,flags,where,err){
+  try{ return new RegExp(src, flags||""); }
+  catch(e){ err.push(`${where}：正規表現が正しくありません（${src}）`); return null; }
+}
+function normBlock(b, where, err){
+  if(!b || typeof b!=="object" || Array.isArray(b)){ err.push(`${where}：読み取り範囲を { } で指定してください。`); return null; }
+  const o = {};
+  o.labelCol = colName(b.labelCol);   if(!o.labelCol)  err.push(`${where}.labelCol：項目名の列を英字で指定してください（例 "E"）。`);
+  o.amountCol = colName(b.amountCol); if(!o.amountCol) err.push(`${where}.amountCol：金額の列を英字で指定してください（例 "F"）。`);
+  o.headingCol = b.headingCol==null ? o.labelCol : colName(b.headingCol);
+  if(!o.headingCol) err.push(`${where}.headingCol：見出しの列を英字で指定してください（例 "A"）。`);
+  o.personCol = null;
+  if(b.personCol!=null){ o.personCol = colName(b.personCol); if(!o.personCol) err.push(`${where}.personCol：列を英字で指定してください（例 "A"）。`); }
+  o.firstRow = Number.isInteger(b.firstRow) && b.firstRow>=1 ? b.firstRow : null;
+  o.lastRow  = Number.isInteger(b.lastRow)  && b.lastRow>=1  ? b.lastRow  : null;
+  if(!o.firstRow) err.push(`${where}.firstRow：読み始める行番号を整数で指定してください。`);
+  if(!o.lastRow)  err.push(`${where}.lastRow：読み終わる行番号を整数で指定してください。`);
+  if(o.firstRow && o.lastRow && o.firstRow>o.lastRow) err.push(`${where}：firstRow は lastRow 以下にしてください。`);
+  o.headings = [];
+  if(!Array.isArray(b.headings)) err.push(`${where}.headings：見出しの一覧を [ ] で指定してください。`);
+  else b.headings.forEach((h,i)=>{
+    if(typeof h==="string" && h.trim()) o.headings.push({text:h.trim(), name:h.trim()});
+    else if(h && typeof h.text==="string" && h.text.trim()) o.headings.push({text:h.text.trim(), name:(typeof h.name==="string"&&h.name.trim())?h.name.trim():h.text.trim()});
+    else err.push(`${where}.headings[${i}]：見出しの文字列、または { "text": …, "name": … } で指定してください。`);
+  });
+  if(b.headingAmount!=null && !["count","ignore"].includes(b.headingAmount)) err.push(`${where}.headingAmount："count" か "ignore" を指定してください。`);
+  o.headingAmount = b.headingAmount==="ignore" ? "ignore" : "count";
+  o.subtotalMarker = (typeof b.subtotalMarker==="string" && b.subtotalMarker) ? b.subtotalMarker : "SUM(";
+  return o;
+}
+function normalizeSpec(raw){
+  const err=[];
+  if(!raw || typeof raw!=="object" || Array.isArray(raw)) return {spec:null, errors:["様式定義は { } で囲んだJSONで書いてください。"]};
+  const sp = {};
+  if(raw.version!==1) err.push("version：1 を指定してください。");
+  if(typeof raw.name!=="string" || !raw.name.trim()) err.push("name：様式の名前を文字列で指定してください。");
+  sp.name = String(raw.name||"").trim();
+
+  const sh = raw.sheet;
+  if(!sh || typeof sh!=="object"){ err.push("sheet：シートの判定方法を指定してください。"); }
+  else{
+    const nc = Array.isArray(sh.nameContains) ? sh.nameContains.map(String).map(nk).filter(Boolean) : [];
+    const sig = [];
+    (Array.isArray(sh.signature)?sh.signature:[]).forEach((g,i)=>{
+      const a = cellAddr(g && g.cell);
+      if(!a || typeof g.contains!=="string" || !nk(g.contains)) err.push(`sheet.signature[${i}]：cell（例 "E58"）と contains（文字列）を指定してください。`);
+      else sig.push({cell:a, contains:nk(g.contains)});
+    });
+    if(!nc.length && !sig.length) err.push("sheet：nameContains か signature のどちらかを指定してください。");
+    const mc = sh.month || {};
+    const mcands = [];
+    (Array.isArray(mc.cell)?mc.cell:[mc.cell]).forEach((c,i)=>{
+      const parts = typeof c==="string" ? c.split("+").map(cellAddr) : [null];
+      if(!parts.length || parts.some(a=>!a)) err.push(`sheet.month.cell${Array.isArray(mc.cell)?"["+i+"]":""}：年月が書かれているセルを指定してください（例 "G1"、複数なら ["G1+H1","F1"] のように。+ は2つのセルをつなげて読む）。`);
+      else mcands.push(parts);
+    });
+    const mlabel = mcands.map(a=>a.join("+")).join("、");
+    let re = null;
+    if(typeof mc.pattern!=="string" || !mc.pattern) err.push("sheet.month.pattern：年月を取り出す正規表現を指定してください。");
+    else{
+      re = toRegex(mc.pattern,"","sheet.month.pattern",err);
+      if(re && (new RegExp(mc.pattern+"|").exec("").length-1) < 2) err.push("sheet.month.pattern：年と月を取り出す、かっこ（）が2つ必要です。");
+    }
+    const nx = Array.isArray(sh.nameExcludes) ? sh.nameExcludes.map(String).map(nk).filter(Boolean) : [];
+    sp.sheet = {nameContains:nc, nameExcludes:nx, signature:sig, monthCells:mcands, monthLabel:mlabel, monthRe:re, monthFromName: sh.monthFromName!==false};
+  }
+  if(raw.carry!=null){
+    const c = cellAddr(raw.carry && raw.carry.cell);
+    if(!c) err.push('carry.cell：セルを指定してください（例 "C17"）。');
+    sp.carry = c;
+  } else sp.carry = null;
+  sp.expense = normBlock(raw.expense,"expense",err);
+  sp.income  = normBlock(raw.income, "income", err);
+
+  const g = raw.groups, groups = {expense:[], income:[]};
+  ["expense","income"].forEach(side=>{
+    const arr = g && Array.isArray(g[side]) ? g[side].map(x=>String(x).trim()).filter(Boolean) : [];
+    if(!arr.length) err.push(`groups.${side}：区分の名前を [ ] で1つ以上指定してください。`);
+    if(new Set(arr).size!==arr.length) err.push(`groups.${side}：同じ名前の区分があります。`);
+    if(arr.includes(UNCL)) err.push(`groups.${side}：「${UNCL}」は自動で使われる名前のため、区分には使えません。`);
+    groups[side]=arr;
+  });
+  sp.groups = groups;
+
+  sp.rules = {expense:[], income:[]};
+  ["expense","income"].forEach(side=>{
+    const rs = raw.rules && Array.isArray(raw.rules[side]) ? raw.rules[side] : [];
+    rs.forEach((r,i)=>{
+      const w=`rules.${side}[${i}]`;
+      if(!r || typeof r.group!=="string" || typeof r.match!=="string"){ err.push(`${w}：group（区分名）と match（キーワード）を指定してください。`); return; }
+      if(!groups[side].includes(r.group)) err.push(`${w}.group：「${r.group}」は groups.${side} にありません。`);
+      const re = toRegex(r.match, r.flags, `${w}.match`, err);
+      if(re) sp.rules[side].push({group:r.group, re});
+    });
+  });
+  sp.fallback = {expense:{}, income:{}};
+  ["expense","income"].forEach(side=>{
+    const fb = raw.fallback && raw.fallback[side];
+    if(fb && typeof fb==="object") for(const k in fb){
+      if(!groups[side].includes(fb[k])) err.push(`fallback.${side}["${k}"]：「${fb[k]}」は groups.${side} にありません。`);
+      else sp.fallback[side][k]=fb[k];
+    }
+  });
+  sp.check = {incomeCell:null, expenseCell:null};
+  if(raw.check){
+    if(raw.check.incomeCell!=null){ sp.check.incomeCell=cellAddr(raw.check.incomeCell); if(!sp.check.incomeCell) err.push("check.incomeCell：セルを指定してください。"); }
+    if(raw.check.expenseCell!=null){ sp.check.expenseCell=cellAddr(raw.check.expenseCell); if(!sp.check.expenseCell) err.push("check.expenseCell：セルを指定してください。"); }
+  }
+  sp.excelPaste = null;
+  if(raw.excelPaste!=null){
+    const e=raw.excelPaste, ok = e && Array.isArray(e.income) && Array.isArray(e.expense);
+    if(!ok) err.push("excelPaste：income と expense を [ ] で指定してください。");
+    else sp.excelPaste = {income:e.income.map(String), expense:e.expense.map(String)};
+  }
+  return {spec: err.length?null:sp, errors: err};
+}
+let spec = normalizeSpec(STD_SPEC).spec;
+const SPEC_LS = "kakeibo-viewer-spec-v1";
+let specRaw = null;   // 読み込んだ様式定義（標準のときは null）
+
+/* ==================== 区分の初期割り当て ==================== */
 function defaultGroup(it){
-  if(it.side==="inc") return it.orig || UNCL;
-  const k = nk(it.label);
-  for(const [re,g] of RULES) if(re.test(k)) return g;
-  return EXP_ORIG_TO_GROUP[it.orig] || UNCL;
+  const side = it.side==="inc" ? "income" : "expense", k = nk(it.label);
+  for(const r of spec.rules[side]) if(r.re.test(k)) return r.group;
+  const fb = spec.fallback[side][it.orig]; if(fb) return fb;
+  if(spec.groups[side].includes(it.orig)) return it.orig;
+  return UNCL;
 }
 
-/* ---------- 状態 ---------- */
+/* ==================== 状態・設定 ==================== */
+const emptyState = () => ({ items:[], rows:[], source:"", warns:[], opening:0 });
+let state = INIT.rows.length ? { items: INIT.items, rows: INIT.rows, source: "内蔵データ（1〜9月）", warns: [], opening: INIT.rows[0].carry_in||0 } : emptyState();
+let lastWb = null, lastName = "";
 const LS_KEY = "kakeibo-viewer-settings-v1";
-let state = { items: INIT.items, rows: INIT.rows, source: "内蔵データ（1〜9月）", warns: [], opening: (INIT.rows[0]||{}).carry_in||0 };
-const defaultSettings = () => ({version:1, groups:{exp:[...DEF_GROUPS.exp], inc:[...DEF_GROUPS.inc]}, assign:{}, alias:{}, foldOn:true, foldPct:2});
+const lsKey = () => LS_KEY + "|" + spec.name;
+const defaultSettings = () => ({version:1, groups:{exp:[...spec.groups.expense], inc:[...spec.groups.income]}, assign:{}, alias:{}, foldOn:true, foldPct:2});
 let settings = loadSettings();
 const openSet = new Set();
 function loadSettings(){
   const d = defaultSettings();
   try{
-    const s = JSON.parse(localStorage.getItem(LS_KEY)||"null");
+    const s = JSON.parse(localStorage.getItem(lsKey())||"null");
     if(s && s.version===1) return normalizeSettings(s, d);
   }catch(e){}
   return d;
@@ -230,7 +561,7 @@ function normalizeSettings(s, d){
     assign: (s.assign&&typeof s.assign==="object")?s.assign:{}, alias:(s.alias&&typeof s.alias==="object")?s.alias:{},
     foldOn: s.foldOn!==false, foldPct: isFinite(+s.foldPct)?Math.max(0,+s.foldPct):2 };
 }
-function saveSettings(){ try{ localStorage.setItem(LS_KEY, JSON.stringify(settings)); }catch(e){} }
+function saveSettings(){ try{ localStorage.setItem(lsKey(), JSON.stringify(settings)); }catch(e){} }
 const itemId = it => it.side+"|"+it.key;
 function groupOf(it){
   let g = settings.assign[itemId(it)];
@@ -250,52 +581,66 @@ function compute(){
   });
 }
 
-/* ---------- 読み込み ---------- */
+/* ==================== 読み取り（様式定義に従う） ==================== */
 const isNum = c => c && typeof c.v==="number";
-const isSumCell = c => !!(c && c.f && /SUM\(/i.test(c.f));
+const isSub = (c,mark) => !!(c && c.f && c.f.indexOf(mark)>=0);
 const cellText = (ws,a) => ws[a] && ws[a].v!=null ? disp(ws[a].v) : "";
+const cellNum = (ws,a) => ws[a] && typeof ws[a].v==="number" ? ws[a].v : null;
 function cleanParen(s){ return disp(String(s).replace(/^[（(]\s*/,"").replace(/\s*[）)]$/,"")); }
 
+function parseSide(ws, side, sp, add){
+  const heads = new Map(sp.headings.map(h=>[nk(h.text), h.name]));
+  const same = sp.labelCol===sp.headingCol, pcol = sp.personCol || sp.headingCol;
+  let cur="", person="";
+  for(let r=sp.firstRow; r<=sp.lastRow; r++){
+    const head = cellText(ws, sp.headingCol+r), hdr = heads.get(nk(head));
+    if(hdr){ cur=hdr; person=""; }
+    const cc = ws[sp.amountCol+r];
+    if(isSub(cc, sp.subtotalMarker)) continue;
+    let amt = isNum(cc) ? cc.v : 0;
+    if(hdr && sp.headingAmount==="ignore") amt = 0;
+    if(same){
+      if(hdr){ if(amt) add(side, head, cur, amt); }
+      else if(head) add(side, head, cur, amt);
+      else if(amt) add(side, `（名称なし 行${r}）`, cur, amt);
+    }else{
+      const b = cleanParen(cellText(ws, sp.labelCol+r));
+      if(!(b || amt!==0 || hdr)) continue;
+      let label;
+      if(hdr) label = b || head;
+      else{
+        const p = cellText(ws, pcol+r); if(p) person = p;
+        label = [person,b].filter(Boolean).join(" ") || `（名称なし 行${r}）`;
+      }
+      add(side, label, cur, amt);
+    }
+  }
+}
 function parseSheet(ws){
   const items = new Map();
   const add = (side,label,orig,amt)=>{ const key=nk(label); if(!key) return; const k=side+"|"+key; let it=items.get(k); if(!it){ it={side,key,label,orig,amt:0}; items.set(k,it);} it.amt+=amt; };
-  /* 支出：E列=費目名、F列=金額 */
-  let cur="";
-  for(let r=4;r<=57;r++){
-    const e = cellText(ws,"E"+r), fc = ws["F"+r];
-    const amt = isNum(fc) && !isSumCell(fc) ? fc.v : 0;
-    if(!e){ if(amt) add("exp",`（名称なし 行${r}）`,cur,amt); continue; }
-    const h = EXP_H.get(nk(e));
-    if(h){ cur=h; if(amt) add("exp",e,cur,amt); }
-    else add("exp",e,cur,amt);
-  }
-  /* 収入：A列=本人など、B列=項目名、C列=金額 */
-  let cur2="", person="";
-  for(let r=18;r<=57;r++){
-    const a = cellText(ws,"A"+r), b = cleanParen(cellText(ws,"B"+r)), cc = ws["C"+r], ak = nk(a);
-    const hdr = INC_H.get(ak);
-    if(hdr){ cur2=hdr; person=""; }
-    if(isSumCell(cc)) continue;
-    const amt = isNum(cc) ? cc.v : 0;
-    if(!(b || amt!==0 || hdr)) continue;
-    let label;
-    if(hdr) label = b || a;
-    else { if(a) person=a; label = [person,b].filter(Boolean).join(" ") || `（名称なし 行${r}）`; }
-    add("inc",label,cur2,amt);
-  }
+  parseSide(ws,"exp",spec.expense,add);
+  parseSide(ws,"inc",spec.income,add);
   return items;
 }
 function parseWorkbook(wb){
-  const rows=[], warns=[], skipped=[], master=new Map();
-  const looks = ws => /当月の支出合計/.test(cellText(ws,"E58")) && /当月の収入合計/.test(cellText(ws,"A58"));
+  const rows=[], warns=[], skipped=[], mismatch=[], dups=[], master=new Map(), sh=spec.sheet;
+  const bySig = ws => sh.signature.length>0 && sh.signature.every(g=>nk(cellText(ws,g.cell)).includes(g.contains));
   const found=[];
   for(const name of wb.SheetNames){
     const ws = wb.Sheets[name];
-    const byName = nk(name).includes("家計計画表");
-    if(!byName && !looks(ws)) continue;
-    const m = String(ws["G1"]?ws["G1"].v:"").match(/(\d{4})\s*年\s*(\d{1,2})\s*月/);
+    if(sh.nameExcludes.some(w=>nk(name).includes(w))) continue;
+    const byName = sh.nameContains.some(w=>nk(name).includes(w));
+    const sigOk = bySig(ws);
+    if(!byName && !sigOk) continue;
+    if(byName && sh.signature.length && !sigOk){ mismatch.push(name); continue; }
+    let m = null;
+    for(const parts of sh.monthCells){
+      const txt = parts.map(a=>ws[a]?String(ws[a].v==null?"":ws[a].v):"").join("");
+      m = txt.match(sh.monthRe); if(m) break;
+    }
     let year = m?+m[1]:null, month = m?+m[2]:null, guessed=false;
-    if(!m){ const mm = nk(name).match(/(\d{1,2})月/); if(mm){ month=+mm[1]; guessed=true; } }
+    if(!m && sh.monthFromName){ const mm = nk(name).match(/(\d{1,2})月/); if(mm){ month=+mm[1]; guessed=true; } }
     if(!month || month<1 || month>12){ if(byName) skipped.push(name); continue; }
     found.push({name,ws,year,month,guessed});
   }
@@ -303,48 +648,71 @@ function parseWorkbook(wb){
   const defYear = ys.length ? ys.sort((a,b)=>ys.filter(v=>v===b).length-ys.filter(v=>v===a).length)[0] : null;
   for(const f of found){
     if(!f.year){ if(defYear) f.year=defYear; else { skipped.push(f.name); f.skip=true; continue; } }
-    if(f.guessed) warns.push(`「${f.name}」：G1セルに年月がないため、シート名の「${f.month}月」と他シートの年（${f.year}年）から判定しました。`);
+    if(f.guessed) warns.push(`「${f.name}」：${sh.monthLabel}に年月がないため、シート名の「${f.month}月」と他シートの年（${f.year}年）から判定しました。`);
   }
+  const byMonth = new Map();
+  for(const f of found){ if(f.skip) continue; const k=f.year*100+f.month; if(!byMonth.has(k)) byMonth.set(k,[]); byMonth.get(k).push(f.name); }
+  for(const [k,names] of byMonth) if(names.length>1) dups.push(`${Math.floor(k/100)}年${k%100}月が複数のシートにあります：${names.map(n=>"「"+n+"」").join("、")}`);
   for(const f of found){
     if(f.skip) continue;
-    const name=f.name, ws=f.ws, m=[null,f.year,f.month];
-    const its = parseSheet(ws), amt = {};
+    const ws=f.ws, its = parseSheet(ws), amt = {};
     for(const [k,it] of its){
       if(!master.has(k)) master.set(k,{side:it.side,key:it.key,label:it.label,orig:it.orig});
       amt[k]=it.amt;
     }
     const sI=sum([...its.values()].filter(i=>i.side==="inc").map(i=>i.amt)), sE=sum([...its.values()].filter(i=>i.side==="exp").map(i=>i.amt));
-    const cI = ws["C58"]&&typeof ws["C58"].v==="number"?ws["C58"].v:null, cE = ws["G58"]&&typeof ws["G58"].v==="number"?ws["G58"].v:null;
+    const cI = spec.check.incomeCell ? cellNum(ws,spec.check.incomeCell) : null, cE = spec.check.expenseCell ? cellNum(ws,spec.check.expenseCell) : null;
     if((cI!==null && Math.round(cI)!==Math.round(sI)) || (cE!==null && Math.round(cE)!==Math.round(sE)))
-      warns.push(`「${name}」：シート上の合計と、読み取った項目の合計が一致しません（行の追加や式の変更がないか確認してください）。`);
-    rows.push({sheet:name, year:+m[1], month:+m[2], carry_in: ws["C17"]&&typeof ws["C17"].v==="number"?ws["C17"].v:0, amt});
+      warns.push(`「${f.name}」：シート上の合計と、読み取った項目の合計が一致しません（行の追加や式の変更がないか確認してください）。`);
+    rows.push({sheet:f.name, year:f.year, month:f.month, carry_in: spec.carry ? (cellNum(ws,spec.carry)||0) : 0, amt});
   }
   rows.sort((a,b)=>a.year-b.year||a.month-b.month);
-  const seen=new Set();
-  for(const r of rows){ const k=r.year*100+r.month; if(seen.has(k)) warns.push(`${r.year}年${r.month}月が複数のシートにあります（${r.sheet}）。重複して集計されます。`); seen.add(k); }
-  if(skipped.length) warns.push(`月を判別できず除外したシート：${skipped.join("、")}（G1セルに「2026年1月）」の形式で年月、またはシート名に「○月」が必要です）`);
-  return {rows, items:[...master.values()], warns, sheetNames:wb.SheetNames.slice()};
+  if(skipped.length) warns.push(`月を判別できず除外したシート：${skipped.join("、")}（${sh.monthLabel}に年月、またはシート名に「○月」が必要です）`);
+  if(mismatch.length) warns.push(`シートの配置が様式（${spec.name}）と違うため除外したシート：${mismatch.map(n=>"「"+n+"」").join("、")}（${sh.signature.map(g=>g.cell+"に「"+g.contains+"」").join("、")} が必要です。別の様式なら、様式定義ファイルを読み込んでください）`);
+  return {rows, items:[...master.values()], warns, dups, sheetNames:wb.SheetNames.slice()};
+}
+/* 読み込んだブックを現在の様式で取り込む。成功したら true */
+function ingest(wb, fname){
+  const p = parseWorkbook(wb);
+  if(p.dups.length){
+    state.warns = ["同じ年月のシートが複数あるため、読み込みませんでした（表示は直前のデータのままです）。"].concat(p.dups,
+      ["日付の入力間違いか、修正前後の両方が残っているのかを確認し、日付を直す、または不要なシートを削除してから、もう一度読み込んでください。"], p.warns);
+    return false;
+  }
+  if(!p.rows.length){
+    const w=[`月別の家計計画表を読み取れませんでした（様式：${spec.name}）。このファイルのシート：${p.sheetNames.map(n=>"「"+n+"」").join("、")||"（なし）"}`,
+      `読み取れるのは、様式定義で指定したシート（名前に「${spec.sheet.nameContains.join("」「")||"—"}」を含む、または同じ様式のシート）で、${spec.sheet.monthLabel}に年月が入っているものです。`];
+    if(p.sheetNames.includes("入力") && p.sheetNames.includes("集計")) w.push("これは集計用のExcelのようです。元の家計計画表のExcelファイルを読み込んでください。");
+    state.warns=w.concat(p.warns); return false;
+  }
+  state = {rows:p.rows, items:p.items, opening:p.rows[0].carry_in, source:fname, warns:p.warns};
+  return true;
 }
 function loadFile(f){
   const rd = new FileReader();
   rd.onload = e=>{
     try{
       const wb = XLSX.read(new Uint8Array(e.target.result),{type:"array"});
-      const p = parseWorkbook(wb);
-      if(!p.rows.length){
-        const w=[`月別の家計計画表を読み取れませんでした。このファイルのシート：${p.sheetNames.map(n=>"「"+n+"」").join("、")||"（なし）"}`,
-          "読み取れるのは、シート名に「家計計画表」を含む（または家計計画表と同じ様式の）シートで、G1セルに「2026年1月）」のように年月が入っているものです。"];
-        if(p.sheetNames.includes("入力") && p.sheetNames.includes("集計")) w.push("これは集計用のExcelのようです。元の家計計画表のExcelファイルを読み込んでください。");
-        state.warns=w.concat(p.warns); render(true); document.getElementById("status").textContent="「"+f.name+"」は読み取れませんでした（表示は直前のデータのままです）。"; return;
-      }
-      state = {rows:p.rows, items:p.items, opening:p.rows[0].carry_in, source:f.name, warns:p.warns};
-      document.getElementById("open").value = state.opening;
-      render(); renderSettings();
+      if(ingest(wb, f.name)){
+        lastWb = wb; lastName = f.name;
+        document.getElementById("open").value = state.opening;
+        render(); renderSettings();
+      }else{ render(true); document.getElementById("status").textContent="「"+f.name+"」は読み取れませんでした（表示は直前のデータのままです）。"; }
     }catch(err){ state.warns=["ファイルを読み込めませんでした："+err.message]; render(true); }
   };
   rd.readAsArrayBuffer(f);
 }
-
+/* 様式定義を切り替える（読み込み済みのExcelは、新しい様式で読み直す） */
+function applySpec(newSpec, raw){
+  spec = newSpec; specRaw = raw||null;
+  try{ if(raw) localStorage.setItem(SPEC_LS, JSON.stringify(raw)); else localStorage.removeItem(SPEC_LS); }catch(e){}
+  settings = loadSettings(); openSet.clear();
+  if(lastWb){ if(!ingest(lastWb,lastName)) { const w=state.warns; state=emptyState(); state.warns=w; } }
+  else if(INIT.rows.length && !raw){ state = { items: INIT.items, rows: INIT.rows, source: "内蔵データ（1〜9月）", warns: [], opening: INIT.rows[0].carry_in||0 }; }
+  else state = emptyState();
+  document.getElementById("open").value = state.opening;
+  syncFold(); render(); renderSettings(); renderSpecCard();
+}
 /* ---------- 描画 ---------- */
 function niceStep(range){ const t=range/5, p=Math.pow(10,Math.floor(Math.log10(t))), f=t/p; return (f<=1?1:f<=2?2:f<=2.5?2.5:f<=5?5:10)*p; }
 const man = v => { const a=Math.abs(v); if(a>=10000){ const x=v/10000; return (Number.isInteger(x)?x:x.toFixed(1))+"万"; } return v.toLocaleString("ja-JP"); };
@@ -463,7 +831,7 @@ function render(onlyWarn){
     return;
   }
   const f=D[0], l=D[D.length-1];
-  $("status").textContent = `読み込み元：${state.source}　／　${D.length}か月分（${f.label}〜${l.label}）`;
+  $("status").textContent = `読み込み元：${state.source}　／　${D.length}か月分（${f.label}〜${l.label}）　／　様式：${spec.name}`;
   renderKpis(D); renderSummaryTable(D); renderGroupTable("exp",D); renderGroupTable("inc",D);
   chartBars($("chart1"),D); chartLine($("chart2"),D);
 }
@@ -548,11 +916,13 @@ dz.addEventListener("drop",e=>{ if(e.dataTransfer.files[0]) loadFile(e.dataTrans
 window.addEventListener("dragover",e=>e.preventDefault()); window.addEventListener("drop",e=>e.preventDefault());
 $("open").oninput=e=>{ const v=Number(e.target.value); state.opening=isFinite(v)?v:0; render(); };
 function excelRows(){
+  const E=spec.excelPaste.expense, I=spec.excelPaste.income;
+  let ex = E.indexOf("その他"); if(ex<0) ex=E.length-1;
   return state.rows.map(r=>{
-    const exp=EXP_ORIG.map(()=>0), inc=INC_ORIG.map(()=>0);
+    const exp=E.map(()=>0), inc=I.map(()=>0);
     state.items.forEach(it=>{ const v=amtOf(r,it); if(!v) return;
-      if(it.side==="exp"){ let i=EXP_ORIG.indexOf(it.orig); if(i<0) i=5; exp[i]+=v; }
-      else { let i=INC_ORIG.findIndex(x=>x[1]===it.orig); if(i<0) i=0; inc[i]+=v; } });
+      if(it.side==="exp"){ let i=E.indexOf(it.orig); if(i<0) i=ex; exp[i]+=v; }
+      else { let i=I.indexOf(it.orig); if(i<0) i=0; inc[i]+=v; } });
     return [r.year,r.month,...inc,...exp];
   });
 }
@@ -562,7 +932,41 @@ $("copy").onclick=async()=>{
   $("copied").textContent="コピーしました（"+rows.length+"行）"; setTimeout(()=>$("copied").textContent="",3000);
 };
 let rt; window.addEventListener("resize",()=>{ clearTimeout(rt); rt=setTimeout(()=>render(),120); });
-$("open").value=state.opening; syncFold(); render(); renderSettings();
+
+/* ---------- 様式定義（読み取りルール） ---------- */
+function renderSpecCard(){
+  $("specName").textContent = spec.name + (specRaw ? "（読み込んだ様式定義）" : "（標準）");
+  $("excelCard").hidden = !spec.excelPaste;
+  $("specErr").innerHTML = "";
+}
+function showSpecErrors(list){
+  $("specErr").innerHTML = `<div class="warn"><b>様式定義を読み込めませんでした（直前の様式のままです）。</b><ul style="margin:6px 0 0 18px;padding:0">${list.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></div>`;
+}
+$("specPick").onclick=()=>$("specFile").click();
+$("specFile").onchange=e=>{
+  const f=e.target.files[0]; e.target.value=""; if(!f) return;
+  const rd=new FileReader();
+  rd.onload=ev=>{
+    let raw; try{ raw=JSON.parse(ev.target.result); }catch(err){ showSpecErrors(/\uFFFD/.test(ev.target.result) ? ["文字コードがUTF-8ではないようです。メモ帳の「名前を付けて保存」で、文字コードを「UTF-8」にして保存し直してください。","（JSONの書き方の確認：かっこ・カンマ・引用符）"+err.message] : ["JSONの書き方が正しくありません："+err.message+"（かっこ・カンマ・全角の引用符などを確認してください。line=行、column=列の位置の付近です）"]); return; }
+    const r=normalizeSpec(raw);
+    if(!r.spec){ showSpecErrors(r.errors); return; }
+    applySpec(r.spec, raw);
+    $("specOk").textContent="様式「"+r.spec.name+"」を読み込みました。"; setTimeout(()=>$("specOk").textContent="",5000);
+  };
+  rd.readAsText(f);
+};
+$("specStd").onclick=()=>{ applySpec(normalizeSpec(STD_SPEC).spec, null); $("specOk").textContent="標準様式に戻しました。"; setTimeout(()=>$("specOk").textContent="",5000); };
+$("specDl").onclick=()=>{
+  const b=new Blob([JSON.stringify(STD_SPEC,null,1)],{type:"application/json"}), a=document.createElement("a");
+  a.href=URL.createObjectURL(b); a.download="format-standard.json"; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+};
+(function restoreSpec(){
+  try{
+    const raw=JSON.parse(localStorage.getItem(SPEC_LS)||"null");
+    if(raw){ const r=normalizeSpec(raw); if(r.spec){ spec=r.spec; specRaw=raw; settings=loadSettings(); state=emptyState(); } }
+  }catch(e){}
+})();
+$("open").value=state.opening; syncFold(); render(); renderSettings(); renderSpecCard();
 </script>
 </body>
 </html>
